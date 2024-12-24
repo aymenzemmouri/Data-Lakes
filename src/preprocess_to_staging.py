@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import pandas as pd
 import boto3
 import numpy as np
@@ -7,162 +8,101 @@ import joblib
 from collections import OrderedDict
 from sklearn.preprocessing import LabelEncoder
 from numba import njit
+import re
 
-
-@njit
-def split_data_func(family_accession, class_encoded, test_ratio=0.33, dev_ratio=0.33):
-    """
-    Splits data into train, dev, and test indices based on unique classes.
-
-    Parameters:
-    family_accession (np.ndarray): Array of class labels (string or int).
-    class_encoded (np.ndarray): Array of encoded class labels (integers).
-    test_ratio (float): Ratio of data to allocate to the test set.
-    dev_ratio (float): Ratio of remaining data to allocate to the dev set.
-
-    Returns:
-    (np.ndarray, np.ndarray, np.ndarray): Indices for train, dev, and test sets.
-    """
-    unique_classes = np.unique(family_accession)
-    train_indices = []
-    dev_indices = []
-    test_indices = []
-
-    num_classes = len(unique_classes)
-
-    for cls in unique_classes:
-        # Find indices for this class
-        print(f"Handling class {cls} out of {num_classes}")
-        class_data_indices = np.where(family_accession == cls)[0]
-        count = len(class_data_indices)
-
-        # Handle edge cases based on the number of instances
-        if count == 1:
-            test_indices.extend(class_data_indices)
-        elif count == 2:
-            dev_indices.extend(class_data_indices[:1])
-            test_indices.extend(class_data_indices[1:])
-        elif count == 3:
-            train_indices.append(class_data_indices[0])
-            dev_indices.append(class_data_indices[1])
-            test_indices.append(class_data_indices[2])
-        else:
-            # Random shuffle
-            randomized_indices = np.random.permutation(class_data_indices)
-            num_test = int(count * test_ratio)
-            num_dev = int((count - num_test) * dev_ratio)
-
-            test_part = randomized_indices[:num_test]
-            dev_part = randomized_indices[num_test:num_test + num_dev]
-            train_part = randomized_indices[num_test + num_dev:]
-
-            train_indices.extend(train_part)
-            dev_indices.extend(dev_part)
-            test_indices.extend(test_part)
-
-    return (np.array(train_indices, dtype=np.int64),
-            np.array(dev_indices, dtype=np.int64),
-            np.array(test_indices, dtype=np.int64))
-
-
-def preprocess_to_staging(bucket_raw, bucket_staging, input_file, output_prefix):
+def preprocess_to_staging(bucket_raw, db_host, db_user, db_password, input_file):
     """
     Preprocesses data from the raw bucket and uploads preprocessed data splits to the staging bucket.
 
     Steps:
-    1. Downloads the raw data file from the raw bucket.
-    2. Cleans the data (handles missing values).
-    3. Encodes the 'family_accession' column into numeric labels.
-    4. Splits the data into train, dev, and test sets.
-    5. Uploads the preprocessed data splits (train, dev, test) to the staging bucket.
-    6. Saves metadata like label encodings and class weights to the staging bucket.
+    •	Download the data from the raw bucket.
+	•	Clean the data (remove duplicates and empty rows).
+	•	Connect to the SQLite database.
+	•	Create a table texts (if it does not exist) with the necessary columns.
+	•	Insert the cleaned data into this table.
+	•	Verify that the data has been correctly inserted.
 
     Parameters:
     bucket_raw (str): Name of the raw S3 bucket.
-    bucket_staging (str): Name of the staging S3 bucket.
+    db_host (str): Database host (used only for logging).
+    db_user (str): Database user (ignored for SQLite).
+    db_password (str): Database password (ignored for SQLite).
     input_file (str): Name of the input file in the raw bucket.
-    output_prefix (str): Prefix for the preprocessed output files in the staging bucket.
     """
     s3 = boto3.client('s3', endpoint_url='http://localhost:4566')
 
     # Step 1: Download raw data
     response = s3.get_object(Bucket=bucket_raw, Key=input_file)
-    data = pd.read_csv(io.BytesIO(response['Body'].read()))
+    data = response['Body'].read().decode('utf-8')
 
     # Step 2: Handle missing values
     print("Cleaning data by removing missing values...")
-    data = data.dropna()
+    
+    # Remove duplicates and empty rows
+    lines = data.splitlines()
+    cleaned_lines = list(dict.fromkeys(line.strip() for line in lines if line.strip()))
+    cleaned_data = "\n".join(cleaned_lines)
+    
+    # The text is composed of multiple lines, with each chapter represented by = Chapter =, and the second chapter starting with == Chapter == etc 
+    # Split the text into chapters
+    pattern = r"^=([^=]+)=$"
 
-    # Step 3: Encode categorical labels
-    print("Encoding labels...")
-    label_encoder = LabelEncoder()
-    data['class_encoded'] = label_encoder.fit_transform(data['family_accession'])
+    # Find all matches (chapter titles)
+    chapter_titles = re.findall(pattern, cleaned_data, re.MULTILINE)
 
-    # Save the label encoder mapping
-    label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
-    label_mapping_csv = pd.DataFrame(list(label_mapping.items()), columns=['family_accession', 'class_encoded'])
-    csv_buffer = io.StringIO()
-    label_mapping_csv.to_csv(csv_buffer, index=False)
-    s3.put_object(
-        Bucket=bucket_staging,
-        Key=f"{output_prefix}_label_mapping.csv",
-        Body=csv_buffer.getvalue()
-    )
-    print("Label mapping saved to staging bucket.")
+    # Dictionary to store the line numbers and content for each chapter
+    chapters = {}
 
-    # Step 4: Split data into train, dev, and test sets
-    print("Splitting data into train, dev, and test sets...")
-    family_accession = data['family_accession'].astype('category').cat.codes.values
-    class_encoded = data['class_encoded'].values
+    # Split the cleaned data into lines once for reusability
+    lines = cleaned_data.split("\n")
 
-    family_accession = np.array(family_accession)
-    class_encoded = np.array(class_encoded)
+    # Index to track the current chapter
+    current_chapter_to_treat = 0
 
-    train_indices, dev_indices, test_indices = split_data_func(family_accession, class_encoded)
+    start_index = 0
+    end_index = 0
 
-    # Create DataFrames for each split
-    train_data = data.iloc[train_indices]
-    dev_data = data.iloc[dev_indices]
-    test_data = data.iloc[test_indices]
+    # Loop through each line in cleaned_data
+    for i, line in enumerate(lines):
+        if current_chapter_to_treat < len(chapter_titles) and chapter_titles[current_chapter_to_treat] in line:
+            start_index = i
 
-    # Drop unnecessary columns
-    train_data = train_data.drop(columns=["family_id", "sequence_name", "family_accession"])
-    dev_data = dev_data.drop(columns=["family_id", "sequence_name", "family_accession"])
-    test_data = test_data.drop(columns=["family_id", "sequence_name", "family_accession"])
+        if (current_chapter_to_treat + 1 < len(chapter_titles) 
+                and chapter_titles[current_chapter_to_treat + 1] in line):
+            end_index = i
+            chapters[chapter_titles[current_chapter_to_treat]] = lines[start_index:end_index]
+            current_chapter_to_treat += 1
 
-    # Step 5: Upload preprocessed splits to staging bucket
-    for split_name, split_data in zip(['train', 'dev', 'test'], [train_data, dev_data, test_data]):
-        csv_buffer = io.StringIO()
-        split_data.to_csv(csv_buffer, index=False)
-        s3.put_object(
-            Bucket=bucket_staging,
-            Key=f"{output_prefix}_{split_name}.csv",
-            Body=csv_buffer.getvalue()
+    if current_chapter_to_treat < len(chapter_titles):
+        chapters[chapter_titles[current_chapter_to_treat]] = lines[start_index:]
+
+    # Step 3: Connect to the SQLite database
+    print(f"Connecting to the SQLite database on {db_host}...")
+    conn = sqlite3.connect('data.db')
+    cursor = conn.cursor()
+
+    # Create the table "texts" if it does not exist
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS texts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            content TEXT
         )
-        print(f"{split_name.capitalize()} split uploaded to staging bucket.")
+    """)
 
-    # Step 6: Calculate and save class weights
-    print("Calculating class weights...")
-    class_counts = train_data['class_encoded'].value_counts()
-    class_weights = 1. / class_counts
-    class_weights /= class_weights.sum()
-
-    # Scale weights
-    min_weight = class_weights.max()
-    weight_scaling_factor = 1 / min_weight
-    class_weights *= weight_scaling_factor
-
-    # Save class weights
-    class_weights_dict = OrderedDict(sorted(class_weights.items()))
-    class_weights_csv = pd.DataFrame(list(class_weights_dict.items()), columns=['class', 'weight'])
-    csv_buffer = io.StringIO()
-    class_weights_csv.to_csv(csv_buffer, index=False)
-    s3.put_object(
-        Bucket=bucket_staging,
-        Key=f"{output_prefix}_class_weights.csv",
-        Body=csv_buffer.getvalue()
-    )
-    print("Class weights saved to staging bucket.")
+    try:
+        for title, content in chapters.items():
+            cursor.execute('''
+                INSERT INTO texts (title, content) 
+                VALUES (?, ?)
+            ''', (title, "\n".join(content)))
+        conn.commit()
+        print("Data inserted successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
+        print("Database connection closed.")
 
 
 if __name__ == "__main__":
@@ -170,9 +110,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Preprocess data from raw to staging bucket")
     parser.add_argument("--bucket_raw", type=str, required=True, help="Name of the raw S3 bucket")
-    parser.add_argument("--bucket_staging", type=str, required=True, help="Name of the staging S3 bucket")
-    parser.add_argument("--input_file", type=str, required=True, help="Name of the input file in raw bucket")
-    parser.add_argument("--output_prefix", type=str, required=True, help="Prefix for output files in staging bucket")
+    parser.add_argument("--db_host", type=str, required=False, default="localhost", help="Database host (default: localhost)")
+    parser.add_argument("--db_user", type=str, required=False, help="Database user (ignored for SQLite)")
+    parser.add_argument("--db_password", type=str, required=False, help="Database password (ignored for SQLite)")
+    parser.add_argument("--input_file", type=str, required=True, help="Name of the input file in the raw bucket")
     args = parser.parse_args()
 
-    preprocess_to_staging(args.bucket_raw, args.bucket_staging, args.input_file, args.output_prefix)
+    preprocess_to_staging(
+        bucket_raw=args.bucket_raw,
+        db_host=args.db_host,
+        db_user=args.db_user,
+        db_password=args.db_password,
+        input_file=args.input_file,
+    )

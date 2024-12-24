@@ -81,11 +81,31 @@ Start LocalStack
 bash scripts/start_localstack.sh
 ```
 
-Download the Dataset
+Download the Dataset from: [Salesforce WikiText Dataset](https://huggingface.co/datasets/Salesforce/wikitext)
 
 ```bash
-pip install kaggle 
-kaggle datasets download googleai/pfam-seed-random-split
+from datasets import load_dataset
+import os
+
+dataset = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1")
+
+os.makedirs('data/raw', exist_ok=True)
+
+# 2. Créer les sous-dossiers locaux (train, test, dev)
+os.makedirs('data/raw/train', exist_ok=True)
+os.makedirs('data/raw/test', exist_ok=True)
+os.makedirs('data/raw/dev', exist_ok=True)
+
+# 3. Sauvegarde des données dans les sous-dossiers
+# Écriture dans des fichiers locaux
+with open('data/raw/train/train.txt', 'w') as f:
+    f.write('\n'.join(dataset['train']['text']))
+
+with open('data/raw/test/test.txt', 'w') as f:
+    f.write('\n'.join(dataset['test']['text']))
+
+with open('data/raw/dev/dev.txt', 'w') as f:
+    f.write('\n'.join(dataset['validation']['text']))
 ```
 
 Move the dataset into a data/raw folder.
@@ -95,22 +115,46 @@ Move the dataset into a data/raw folder.
 Unpack the dataset into a single CSV file in the raw bucket:
 
 ```bash
-python build/unpack_to_raw.py --input_dir data/raw --bucket_name raw --output_file_name combined_raw.csv
+python build/unpack_to_raw.py --input_dir data/raw --bucket_name raw --output_file_name combined_raw.txt
 ```
 
 Preprocess the data to clean, encode, split into train/dev/test, and compute class weights:
 
 ```bash
-python src/preprocess_to_staging.py --bucket_raw raw --bucket_staging staging --input_file combined_raw.csv --output_prefix preprocessed
+python src/preprocess_to_staging.py \
+    --bucket_raw raw \
+    --db_host localhost \
+    --db_user root \
+    --db_password mypassword \
+    --input_file combined_raw.txt
 ```
 
 Prepare the data for model training by tokenizing sequences:
 
 ```bash
-python src/process_to_curated.py --bucket_staging staging --bucket_curated curated --input_file preprocessed_train.csv --output_file tokenized_train.csv
+python src/process_to_curated.py \
+    --sqlite_db_path data.db \
+    --mongo_uri mongodb://localhost:27017/ \
+    --mongo_db_name curated \
+    --mongo_collection_name wikitext \
+    --model_name distilbert-base-uncasedcsv
 ```
 
-## 4. Running the Entire Pipeline with DVC
+
+Verify in mongodb: 
+
+```bash
+brew tap mongodb/brew
+brew install mongodb-database-tools
+
+docker exec -it mongodbmongo #doesn't work 
+# i used mongosh instead
+
+use curated
+
+db.wikitext.find().limit(5).pretty()
+```
+## 4. Running the Entire Pipeline with DVC (doesn't work)
 The pipeline stages are defined in dvc.yaml. Run the pipeline using:
 
 ```bash
