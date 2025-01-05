@@ -1,80 +1,128 @@
-import io
+import argparse
+from datetime import datetime
+import mysql.connector
+from pymongo import MongoClient
+from transformers import GPT2Tokenizer
 import pandas as pd
-import boto3
-from transformers import AutoTokenizer
+from tqdm import tqdm
 
+def get_mysql_data(host, user, password, database):
+    """Récupère les données depuis MySQL."""
+    try:
+        connection = mysql.connector.connect(
+            host=host,
+            user=user,
+            password=password,
+            database=database
+        )
+        
+        query = "SELECT id, text FROM texts"
+        df = pd.read_sql(query, connection)
+        connection.close()
+        
+        return df
+    except Exception as e:
+        print(f"Erreur lors de la récupération des données MySQL: {e}")
+        return None
 
-def tokenize_sequences(bucket_staging, bucket_curated, input_file, output_file, model_name="facebook/esm2_t6_8M_UR50D"):
-    """
-    Tokenizes protein sequences from the staging bucket and uploads processed data to the curated bucket.
+def tokenize_texts(texts, tokenizer):
+    """Tokenize les textes avec le tokenizer spécifié."""
+    tokenized = []
+    for text in tqdm(texts, desc="Tokenization"):
+        tokens = tokenizer.encode(text, add_special_tokens=True)
+        tokenized.append(tokens)
+    return tokenized
 
-    Steps:
-    1. Downloads the staging data file from the staging bucket.
-    2. Tokenizes the 'sequence' column using a pre-trained tokenizer.
-    3. Stores tokenized sequences alongside other relevant columns.
-    4. Uploads the tokenized data to the curated bucket.
+def prepare_mongodb_documents(df, tokenized_texts):
+    """Prépare les documents pour MongoDB."""
+    documents = []
+    for idx, row in df.iterrows():
+        document = {
+            "id": str(row['id']),
+            "text": row['text'],
+            "tokens": tokenized_texts[idx],
+            "metadata": {
+                "source": "mysql",
+                "processed_at": datetime.utcnow().isoformat(),
+                "tokenizer": "gpt2"
+            }
+        }
+        documents.append(document)
+    return documents
 
-    Parameters:
-    bucket_staging (str): Name of the staging S3 bucket.
-    bucket_curated (str): Name of the curated S3 bucket.
-    input_file (str): Name of the input file in the staging bucket.
-    output_file (str): Name of the output file in the curated bucket.
-    model_name (str): Name of the Hugging Face model to use for tokenization.
-    """
-    # Initialize S3 client
-    s3 = boto3.client('s3', endpoint_url='http://localhost:4566')
+def insert_to_mongodb(documents, mongo_uri="mongodb://localhost:27017/"):
+    """Insère les documents dans MongoDB."""
+    try:
+        client = MongoClient(mongo_uri)
+        db = client.curated
+        collection = db.wikitext
+        
+        # Supprime les documents existants
+        collection.delete_many({})
+        
+        # Insère les nouveaux documents
+        result = collection.insert_many(documents)
+        print(f"Nombre de documents insérés: {len(result.inserted_ids)}")
+        
+        # Vérifie quelques documents
+        print("\nExemple de documents insérés:")
+        for doc in collection.find().limit(2):
+            print(f"\nID: {doc['id']}")
+            print(f"Text (premiers 50 caractères): {doc['text'][:50]}...")
+            print(f"Nombre de tokens: {len(doc['tokens'])}")
+            print(f"Processed at: {doc['metadata']['processed_at']}")
+        
+        client.close()
+        return True
+    except Exception as e:
+        print(f"Erreur lors de l'insertion dans MongoDB: {e}")
+        return False
 
-    # Step 1: Download staging data
-    print(f"Downloading {input_file} from staging bucket...")
-    response = s3.get_object(Bucket=bucket_staging, Key=input_file)
-    data = pd.read_csv(io.BytesIO(response['Body'].read()))
-
-    # Ensure the 'sequence' column exists
-    if "sequence" not in data.columns:
-        raise ValueError("The input data must contain a 'sequence' column.")
-
-    # Step 2: Load tokenizer
-    print(f"Loading tokenizer for {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    # Step 3: Tokenize sequences
-    print("Tokenizing sequences...")
-    tokenized_data = []
-    for sequence in data["sequence"]:
-        tokens = tokenizer(sequence, truncation=True, padding="max_length", max_length=1024, return_tensors="np")
-        tokenized_data.append(tokens["input_ids"][0])  # Extract token IDs as a flat array
-
-    # Convert tokenized data into a DataFrame
-    tokenized_df = pd.DataFrame(tokenized_data)
-    tokenized_df.columns = [f"token_{i}" for i in range(tokenized_df.shape[1])]
-
-    # Merge tokenized sequences with metadata
-    print("Merging tokenized sequences with metadata...")
-    metadata = data.drop(columns=["sequence"])  # Drop the original sequence column
-    processed_data = pd.concat([metadata, tokenized_df], axis=1)
-
-    # Step 4: Save processed data locally
-    local_output_path = f"/tmp/{output_file}"
-    processed_data.to_csv(local_output_path, index=False)
-    print(f"Processed data saved locally at {local_output_path}.")
-
-    # Step 5: Upload to curated bucket
-    print(f"Uploading {output_file} to curated bucket...")
-    with open(local_output_path, "rb") as f:
-        s3.upload_fileobj(f, bucket_curated, output_file)
-
-    print(f"Processed data successfully uploaded to curated bucket as {output_file}.")
-
+def main():
+    parser = argparse.ArgumentParser(description='Traitement des données de staging vers curated')
+    parser.add_argument('--mysql_host', type=str, default='localhost', help='Hôte MySQL')
+    parser.add_argument('--mysql_user', type=str, default='root', help='Utilisateur MySQL')
+    parser.add_argument('--mysql_password', type=str, default='root', help='Mot de passe MySQL')
+    parser.add_argument('--mongo_uri', type=str, default='mongodb://localhost:27017/', 
+                        help='URI MongoDB')
+    
+    args = parser.parse_args()
+    
+    # 1. Récupérer les données de MySQL
+    print("Récupération des données depuis MySQL...")
+    df = get_mysql_data(
+        args.mysql_host,
+        args.mysql_user,
+        args.mysql_password,
+        'staging'
+    )
+    
+    if df is None or df.empty:
+        print("Aucune donnée récupérée depuis MySQL")
+        return
+    
+    print(f"Nombre de textes récupérés: {len(df)}")
+    
+    # 2. Initialiser le tokenizer
+    print("\nInitialisation du tokenizer GPT-2...")
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    
+    # 3. Tokenizer les textes
+    print("\nTokenization des textes...")
+    tokenized_texts = tokenize_texts(df['text'].tolist(), tokenizer)
+    
+    # 4. Préparer les documents pour MongoDB
+    print("\nPréparation des documents pour MongoDB...")
+    documents = prepare_mongodb_documents(df, tokenized_texts)
+    
+    # 5. Insérer dans MongoDB
+    print("\nInsertion des documents dans MongoDB...")
+    success = insert_to_mongodb(documents, args.mongo_uri)
+    
+    if success:
+        print("\nTraitement terminé avec succès!")
+    else:
+        print("\nErreur lors du traitement")
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Process data from staging to curated bucket")
-    parser.add_argument("--bucket_staging", type=str, required=True, help="Name of the staging S3 bucket")
-    parser.add_argument("--bucket_curated", type=str, required=True, help="Name of the curated S3 bucket")
-    parser.add_argument("--input_file", type=str, required=True, help="Name of the input file in the staging bucket")
-    parser.add_argument("--output_file", type=str, required=True, help="Name of the output file in the curated bucket")
-    parser.add_argument("--model_name", type=str, default="facebook/esm2_t6_8M_UR50D", help="Tokenizer model name")
-    args = parser.parse_args()
-
-    tokenize_sequences(args.bucket_staging, args.bucket_curated, args.input_file, args.output_file, args.model_name)
+    main()
