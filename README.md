@@ -16,18 +16,6 @@ MySQL
 MongoDB
 LocalStack (pour simuler S3)
 
-## Structure du projet
-.
-├── build/
-│   └── unpack_to_raw.py
-├── src/
-│   ├── preprocess_to_staging.py
-│   └── process_to_curated.py
-├── data/
-│   └── raw/
-├── dvc.yaml
-└── params.yaml
-
 
 ## Configurez vos services :
 MySQL sur localhost:3306
