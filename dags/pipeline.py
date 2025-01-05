@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2024, 1, 1),
+    'start_date': datetime(2025, 1, 1),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
@@ -36,7 +36,7 @@ transform_task = BashOperator(
 # Tâche 3: Chargement vers MongoDB
 load_task = BashOperator(
     task_id='process_to_curated',
-    bash_command='python /opt/airflow/scripts/src/process_to_curated.py --mysql_host mysql --mysql_user root --mysql_password root --mongo_uri mongodb://mongodb:27017/',
+    bash_command='python /opt/airflow/scripts/process_to_curated.py --mysql_host mysql --mysql_user root --mysql_password root --mongo_uri mongodb://mongodb:27017/',
     dag=dag,
 )
 

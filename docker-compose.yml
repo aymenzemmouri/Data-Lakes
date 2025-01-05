@@ -61,6 +61,10 @@ services:
 
   airflow-webserver:
     build: .
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     image: apache/airflow:2.7.1
     container_name: airflow-webserver
     depends_on:
@@ -86,6 +90,10 @@ services:
 
   airflow-scheduler:
     build: .
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     image: apache/airflow:2.7.1
     container_name: airflow-scheduler
     depends_on:
