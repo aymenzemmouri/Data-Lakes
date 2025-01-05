@@ -1,5 +1,7 @@
-# TP3 - Pipeline de traitement des données
-Ce projet implémente une pipeline de traitement de données en trois étapes utilisant DVC (Data Version Control) pour l'orchestration.
+# TP4 - Pipeline de traitement des données avec Airflow
+Ce projet implémente une pipeline de traitement de données en trois étapes utilisant Airflow pour l'orchestration.
+
+Vous pouvez toujours lancer la pipeline en local avec DVC si vous le désirez nonobstant.
 
 ## Architecture
 La pipeline est composée de trois étapes principales :
@@ -17,14 +19,11 @@ MongoDB
 LocalStack (pour simuler S3)
 
 
-## Configurez vos services :
-MySQL sur localhost:3306
-MongoDB sur localhost:27017
-LocalStack sur localhost:4566
+## Trigger le DAG Airflow
 
-## Pipeline DVC
-La pipeline est définie dans dvc.yaml et comprend trois étapes :
-
-unpack_to_raw : Extrait les données vers data/raw
-preprocess_to_staging : Charge les données dans MySQL
-process_to_curated : Traite et stocke dans MongoDB
+* Lancez un **docker-compose up -d** pour lancer tous les services. Cela installera également toutes les dépendances nécessaires pour Airflow à travers le fichier *dockerfile*
+* Accédez à l'interface Airflow sur localhost:8081. Si besoin, remplacez localhost par l'ip locale de la VM ou du WSL 2 sur lequel vous faites tourner votre stack. 
+* J'ai paramétré le docker-compose pour que l'identifiant et le mot de passe soient **airflow**
+* Depuis votre terminal, lancez le script pipeline.py du dossier dags. Cela fera apparaître le DAG dans l'interface web de Airflow
+* Vous pouvez maintenant trigger le DAG depuis l'interface graphique. Il sera automatiquement relancé à l'intervalle défini dans pipeline.py ...
+* ... ce que nous allons utiliser pour remplir une base de données en continu depuis une API dans le TP5
