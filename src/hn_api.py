@@ -14,13 +14,13 @@ class HackerNewsAPI:
         stories = []
         
         # Récupération des IDs
-        url = f"{HackerNewsAPI.BASE_URL}/topstories.json"
+        url = "" # A vous de trouver l'URL exacte à query
         response = requests.get(url)
         story_ids = response.json()[:limit]
         
         # Récupération des détails pour chaque histoire
         for story_id in story_ids:
-            url = f"{HackerNewsAPI.BASE_URL}/item/{story_id}.json"
+            url = "" # A vous de trouver l'URL à query encore une fois
             response = requests.get(url)
             story = response.json()
             
@@ -43,20 +43,9 @@ def upload_to_s3(stories, endpoint_url):
     """Upload les stories vers S3."""
     s3_client = boto3.client('s3', endpoint_url=endpoint_url)
     
-    # Convertir en JSON et encoder en bytes
-    stories_json = json.dumps(stories).encode('utf-8')
-    
-    # Upload vers S3
-    try:
-        s3_client.put_object(
-            Bucket='raw',
-            Key='hackernews_stories.json',
-            Body=stories_json
-        )
-        print("Stories téléversées avec succès dans s3://raw/hackernews_stories.json")
-    except Exception as e:
-        print(f"Erreur lors du téléversement : {e}")
-        raise
+    #################
+    # A vous d'écrire cette fonction
+    #################
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch top stories from Hacker News API')

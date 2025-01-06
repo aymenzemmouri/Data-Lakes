@@ -12,29 +12,15 @@ default_args = {
     'retry_delay': timedelta(minutes=1),
 }
 
-dag = DAG(
-    'hackernews_pipeline',
-    default_args=default_args,
-    description='A simple HackerNews pipeline',
-    schedule=timedelta(minutes=5),
+
+# Ici, vous pouvez définir votre DAG en utilisant l'exemple que vous ai fournis du TP4. 
+# N'oubliez pas de schedule votre DAG pour qu'il se trigger à un intervale régulier, disons 30mn
+dag = DAG(    
+    # Votre code ici ...
 )
 
-# Chemin vers les scripts
-SCRIPTS_PATH = "/opt/airflow/scripts"
-
-# Tâche pour récupérer et sauvegarder les stories dans S3
-fetch_stories = BashOperator(
-    task_id='fetch_stories',
-    bash_command=f'python {SCRIPTS_PATH}/hn_api.py --limit 50 --endpoint-url http://localstack:4566',
-    dag=dag,
+first_step = BashOperator(
+    # Votre code ici ...
 )
 
-# Tâche pour indexer dans Elasticsearch
-index_stories = BashOperator(
-    task_id='index_stories',
-    bash_command=f'python {SCRIPTS_PATH}/es_handler.py --host elasticsearch --port 9200 --endpoint-url http://localstack:4566',
-    dag=dag,
-)
-
-# Définition de l'ordre des tâches
-fetch_stories >> index_stories
+# Bonne chance !
