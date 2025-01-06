@@ -21,7 +21,8 @@ LocalStack (pour simuler S3)
 
 ## Trigger le DAG Airflow
 
-* Lancez un **docker-compose up -d** pour lancer tous les services. Cela installera également toutes les dépendances nécessaires pour Airflow à travers le fichier *dockerfile*
+* Lancez un **docker-compose build** pour installer l'environnement virtuel qui sera utilisé par Airflow. Airflow utilise son propre environnement d'exécution, c'est pourquoi nous ne passons plus simplement par un venv conda ou similaire, mais par un dockerfile.
+* Lancez un **docker-compose up -d** pour lancer tous les services.
 * Accédez à l'interface Airflow sur localhost:8081. Si besoin, remplacez localhost par l'ip locale de la VM ou du WSL 2 sur lequel vous faites tourner votre stack. 
 * J'ai paramétré le docker-compose pour que l'identifiant et le mot de passe soient **airflow**
 * Depuis votre terminal, lancez le script pipeline.py du dossier dags. Cela fera apparaître le DAG dans l'interface web de Airflow
