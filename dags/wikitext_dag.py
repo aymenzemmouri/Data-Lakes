@@ -22,21 +22,21 @@ dag = DAG(
 # Tâche 1: Extraction vers raw
 extract_task = BashOperator(
     task_id='unpack_to_raw',
-    bash_command='python /opt/airflow/build/unpack_to_raw.py --output-dir /opt/airflow/data/raw --endpoint-url http://localstack:4566',
+    bash_command='AWS_ACCESS_KEY_ID=root AWS_SECRET_ACCESS_KEY=root python /opt/airflow/build/unpack_to_raw.py --output-dir /opt/airflow/data/raw --endpoint-url http://localstack:4566',
     dag=dag,
 )
 
 # Tâche 2: Transformation vers MySQL
 transform_task = BashOperator(
     task_id='preprocess_to_staging',
-    bash_command='python /opt/airflow/scripts/preprocess_to_staging.py --bucket_raw raw --db_host mysql --db_user root --db_password root --endpoint-url http://localstack:4566',
+    bash_command='AWS_ACCESS_KEY_ID=root AWS_SECRET_ACCESS_KEY=root python /opt/airflow/scripts/preprocess_to_staging.py --bucket_raw raw --db_host mysql --db_user root --db_password root --endpoint-url http://localstack:4566',
     dag=dag,
 )
 
 # Tâche 3: Chargement vers MongoDB
 load_task = BashOperator(
     task_id='process_to_curated',
-    bash_command='python /opt/airflow/scripts/process_to_curated.py --mysql_host mysql --mysql_user root --mysql_password root --mongo_uri mongodb://mongodb:27017/',
+    bash_command='AWS_ACCESS_KEY_ID=root AWS_SECRET_ACCESS_KEY=root python /opt/airflow/scripts/process_to_curated.py --mysql_host mysql --mysql_user root --mysql_password root --mongo_uri mongodb://mongodb:27017/',
     dag=dag,
 )
 
