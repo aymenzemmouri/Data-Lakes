@@ -16,11 +16,25 @@ default_args = {
 # Ici, vous pouvez définir votre DAG en utilisant l'exemple que vous ai fournis du TP4. 
 # N'oubliez pas de schedule votre DAG pour qu'il se trigger à un intervale régulier, disons 30mn
 dag = DAG(    
-    # Votre code ici ...
+    "hackernews_pipeline",
+    default_args=default_args,
+    description='Pipeline ETL pour le traitement des données de hackernews',
+    schedule=timedelta(days=1),
 )
 
-first_step = BashOperator(
-    # Votre code ici ...
+extract_from_hn_api = BashOperator(
+    task_id='hn_api',
+    bash_command='python /opt/airflow/build/hn_api.py --limit 50 --endpoint-url http://localhost:4566',
+    dag=dag,
 )
 
-# Bonne chance !
+# Store in elasticsearch
+store_elasticseach = BashOperator(
+    task_id='es_handler',
+    bash_command='python /opt/airflow/scripts/es_handler.py es_handler.py --host localhost --port 9200 --index hackernews --endpoint-url http://localhost:4566',
+    dag=dag,
+)
+
+
+# Définir l'ordre des tâches
+extract_from_hn_api >> store_elasticseach

@@ -14,16 +14,17 @@ class HackerNewsAPI:
         stories = []
         
         # Récupération des IDs
-        url = "" # A vous de trouver l'URL exacte à query
+        url = "https://hacker-news.firebaseio.com/v0/topstories.json" # A vous de trouver l'URL exacte à query
         response = requests.get(url)
         story_ids = response.json()[:limit]
         
         # Récupération des détails pour chaque histoire
         for story_id in story_ids:
-            url = "" # A vous de trouver l'URL à query encore une fois
+            url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json" # A vous de trouver l'URL à query encore une fois
             response = requests.get(url)
             story = response.json()
             
+            print(story.keys())
             if story and story.get('type') == 'story':
                 # Transformation des données directement
                 transformed_story = {
@@ -31,7 +32,8 @@ class HackerNewsAPI:
                     "title": story.get("title"),
                     "url": story.get("url", ""),
                     "score": story.get("score", 0),
-                    "timestamp": datetime.fromtimestamp(story.get("time", 0)).isoformat()
+                    "timestamp": datetime.fromtimestamp(story.get("time", 0)).isoformat(),
+                    "text": story.get("text", "")
                 }
                 stories.append(transformed_story)
             
@@ -46,6 +48,11 @@ def upload_to_s3(stories, endpoint_url):
     #################
     # A vous d'écrire cette fonction
     #################
+    for story in stories:
+        story_id = story['id']
+        s3_client.put_object(Bucket='raw', Key=f"{story_id}.json", Body=json.dumps(story))
+
+
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch top stories from Hacker News API')
